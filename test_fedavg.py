@@ -1,0 +1,240 @@
+import warnings
+warnings.filterwarnings("ignore")  # "error", "ignore", "always", "default", "module" or "once"
+
+
+import numpy as np
+import pandas as pd
+import random
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.utils import shuffle
+from sklearn.metrics import accuracy_score
+from sklearn import preprocessing
+import os
+import copy
+
+from federated_utils_fedavg_copy import *
+import numpy as np
+import pandas as pd
+import random
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.utils import shuffle
+from sklearn.metrics import accuracy_score
+from sklearn import preprocessing
+ 
+import numpy as np
+import pandas as pd
+import random
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.utils import shuffle
+from sklearn.metrics import accuracy_score
+from sklearn import preprocessing
+
+# Declare paths (relative to /kaggle/working/)
+drebin_data_path = 'data/drebin.csv'  # Use forward slashes (/) instead of backslashes (\)
+malgenome_data_path = 'data/malgenome.csv'
+kronodroid_data_path = 'data/kronodroid.csv'
+TUANDROMD_data_path = 'data/TUANDROMD.csv'
+
+
+Drebin_data = pd.read_csv(drebin_data_path, header = None)
+
+Malgenome_data = pd.read_csv(malgenome_data_path)
+
+Tuandromd_data=pd.read_csv(TUANDROMD_data_path)
+
+kronodroid_data=pd.read_csv(kronodroid_data_path)
+Kronodroid_data = kronodroid_data.iloc[:,range(1,kronodroid_data.shape[1])]
+
+
+
+
+
+
+def train_model(model, train_loader, loss_fn, optimizer, epochs, mu=0.01
+):
+    model.train()
+    for epoch in range(epochs):
+        for inputs, labels in train_loader:
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = loss_fn(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+all_avg = []
+all_std = []
+
+def setup_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+
+
+
+
+epoch_list = [5]
+n_clients = [10]
+n_round = [30]
+
+dataset = ['Drebin','Malgenome' , 'Kronodroid','Tuandromd']
+
+
+
+seed = 123
+for epoch in epoch_list:
+    setup_seed(seed)
+    for d in range(len(dataset)):
+        if d == 0:
+            use_data = Drebin_data
+        elif d == 1:
+            use_data = Malgenome_data
+        elif d == 2:
+            use_data = Kronodroid_data
+        elif d == 3:
+            use_data = Tuandromd_data
+
+        print('===================================================================================================')
+        print('Working with:', dataset[d])
+        print('===================================================================================================')
+
+        for r in n_round:  # number of rounds loop
+            comms_round = r
+            for cl in n_clients:  # number of clients loop
+                number_of_clients = cl
+
+                print('---------------------------------------------')
+                print('No. of Clients:', number_of_clients)
+                print('No. of Rounds:', comms_round)
+                print('---------------------------------------------')
+
+                features = np.array(use_data.iloc[:, range(0, use_data.shape[1] - 1)])  # feature set
+                labels = use_data.iloc[:, -1]  # labels --> B : Benign and S
+
+                # Do feature scaling
+                X = preprocessing.StandardScaler().fit(features).transform(features)
+
+                # binarize the labels
+                lb = LabelBinarizer()
+                y = lb.fit_transform(labels)
+
+                # split data into training and test set
+                X_train, X_test, y_train, y_test = train_test_split(X,
+                                                                    y, shuffle=True,
+                                                                    test_size=0.2,
+                                                                    random_state=100)
+
+                # create clients -- Horizontal FL
+                clients = create_clients(X_train, y_train, num_clients=number_of_clients, initial='client')
+
+                # process and batch the training data for each client
+                clients_batched = dict()
+                for (client_name, data) in clients.items():
+                    clients_batched[client_name] = batch_data(data)
+
+                # process and batch the test set
+                test_batched = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(torch.tensor(X_test, dtype=torch.float32),
+                                                                                         torch.tensor(y_test, dtype=torch.float32)),
+                                                           batch_size=len(y_test), shuffle=False)
+
+                # ==============================================
+                # Traditional FedAvg 2017
+                # ==============================================
+                # -----------------------------------------------
+                smlp_global = SimpleMLP(X.shape[1], 1)
+                global_model = smlp_global
+                all_results = list()
+
+                # create optimizer
+                lr = 0.00001
+                loss = nn.BCELoss()
+                optimizer = torch.optim.Adam(global_model.parameters(), lr=0.001)
+
+                # initialize global model
+
+                # -----------------------------------------------
+
+                print('|=======================|')
+                print('|Traditional FedAvg 2017|')
+                print('|=======================|')
+                # In your communication round loop
+                for comm_round in range(comms_round):
+                    # get the global model's weights - will serve as the initial weights for all local models
+                    global_weights = [param.data.clone() for param in global_model.parameters()]
+                    scaled_local_weight_list = list()
+                
+                    # randomize client data - using keys
+                    client_names = list(clients_batched.keys())
+                    random.shuffle(client_names)
+                    
+                    # Client selection: select a subset (e.g., 50% of clients)
+                    selection_rate = 0.8
+                    num_selected = max(1, int(selection_rate * len(client_names)))
+                    selected_clients = client_names[:num_selected]
+                    print(selected_clients)
+                    for client in selected_clients:
+                        smlp_local = SimpleMLP(X.shape[1], 1)
+                        local_model = smlp_local
+                        # set local model weights to the global model's weights
+                        local_model.load_state_dict({name: param.clone() for name, param in zip(local_model.state_dict(), global_weights)})
+                        optimizer = torch.optim.AdamW(local_model.parameters(), lr=0.00001,betas=(0.9, 0.999),weight_decay=lr/comms_round)
+                        # optimizer = torch.optim.SGD(local_model.parameters(), lr=0.01)
+
+
+                        # fit local model with client's data
+                        train_loader = DataLoader(
+                            TensorDataset(torch.tensor(clients_batched[client].dataset.tensors[0], dtype=torch.float32),
+                                          torch.tensor(clients_batched[client].dataset.tensors[1], dtype=torch.float32)),
+                            batch_size=32, shuffle=True)
+                
+                        train_model(local_model, train_loader, loss, optimizer,epoch)
+                
+                        # scale the model weights and add to the list
+                        scaling_factor = weight_scalling_factor(clients_batched, client)
+                        scaled_weights = scale_model_weights(local_model.state_dict().values(), scaling_factor)
+                        scaled_local_weight_list.append(scaled_weights)
+                
+                        # clear session to free memory after each communication round
+                        torch.cuda.empty_cache()
+                
+                    # to get the average over all the selected local models, we simply take the sum of the scaled weights
+                    average_weights = sum_scaled_weights(scaled_local_weight_list)
+                
+                    # update global model
+                    for param, avg_param in zip(global_model.parameters(), average_weights):
+                        param.data.copy_(avg_param)
+                
+                    # Evaluate global model and collect results as before...
+                    for X_test_batch, Y_test_batch in test_batched:
+                        global_acc, global_loss, global_f1, global_precision, global_recall, global_auc, global_fpr, global_specificity = test_model(X_test_batch, Y_test_batch, global_model, comm_round)
+                        all_results.append([global_acc, global_loss, global_f1, global_precision, global_recall, global_auc, global_fpr, global_specificity])
+                
+                # Create the directory if it does not exist
+                directory = f'results/round-{r}/{cl}-clients'
+                os.makedirs(directory, exist_ok=True)
+                all_R = pd.DataFrame(all_results, columns=['global_acc', 'global_loss', 'global_f1', 'global_precision', 'global_recall', 'global_auc', 'global_fpr', 'global_specificity'])
+                flname = f'results/round-{r}/{cl}-clients/FedAvg-{dataset[d]}-{epoch}-results.csv'
+                all_R.to_csv(flname, index=None)
+
+                all_avg.append(np.concatenate(([dataset[d], r, cl], np.mean(all_results, axis=0))))  # Storing avg values for each dataset
+                all_std.append(np.concatenate(([dataset[d], r, cl], np.std(all_results, axis=0))))  # Storing std values for each dataset
+
+    ALL_AVG = pd.DataFrame(all_avg, columns=['Dataset', 'num of round', 'num of clients', 'global_acc', 'global_loss', 'global_f1', 'global_precision', 'global_recall', 'global_auc', 'global_fpr', 'global_specificity'])
+    ALL_AVG.to_csv(f'FedAvg-{epoch}-results.csv', index=None)
+
+    ALL_STD = pd.DataFrame(all_std, columns=['Dataset', 'num of round', 'num of clients', 'global_acc', 'global_loss', 'global_f1', 'global_precision', 'global_recall', 'global_auc', 'global_fpr', 'global_specificity'])
+    ALL_STD.to_csv(f'FedAvg-{epoch}-all-std-results.csv', index=None)
+
