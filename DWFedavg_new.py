@@ -73,7 +73,7 @@ def setup_seed(seed):
 
 selection_rate = 0.8
 epoch_list = [32]
-n_clients = [20]
+n_clients = [5,10,15,20]
 n_round = [10]
 dataset = ['Drebin', 'Malgenome', 'Kronodroid', 'Tuandromd']
 seed = 123
