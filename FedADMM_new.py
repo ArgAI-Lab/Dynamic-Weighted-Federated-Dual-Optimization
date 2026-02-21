@@ -87,8 +87,8 @@ def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 epoch_list = [32]
-n_clients = [5,10,15,20]
-n_round = [10]
+n_clients = [5,10,15]
+n_round = [20]
 dataset = ['Drebin', 'Malgenome', 'Kronodroid', 'Tuandromd']
 seed = 123
 

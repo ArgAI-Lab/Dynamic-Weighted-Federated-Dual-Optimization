@@ -152,7 +152,7 @@ def setup_seed(seed):
 
 epoch_list = [32]
 n_clients = [20]
-n_round = [10]
+n_round = [20]
 
 
 
